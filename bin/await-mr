@@ -1,0 +1,87 @@
+#!/bin/sh
+# await-mr — wait until a merge request is merged, then recruit an agent on it.
+#
+#   await-mr --repo <path> --mr <iid>       [--role tester] [--interval 120] -- <task ...>
+#   await-mr --repo <path> --branch <name>  [--role tester] [--interval 120] -- <task ...>
+#
+# Why a watcher instead of telling the agent to wait: an agent parked in a polling
+# loop burns an Opus session for hours. This costs nothing while it waits, and only
+# spends a session once there is something to do.
+#
+# With --branch the MR does not have to exist yet: the watcher waits for it to
+# appear, then waits for it to be merged.
+#
+# Progress is appended to ~/.local/state/await-mr/<repo>-<key>.log
+
+set -eu
+
+repo=""; mr=""; branch=""; role="tester"; interval=120
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --repo)     repo="${2:?}"; shift 2 ;;
+        --mr)       mr="${2:?}"; shift 2 ;;
+        --branch)   branch="${2:?}"; shift 2 ;;
+        --role)     role="${2:?}"; shift 2 ;;
+        --interval) interval="${2:?}"; shift 2 ;;
+        --)         shift; break ;;
+        *)          echo "await-mr: unknown option $1" >&2; exit 1 ;;
+    esac
+done
+task="$*"
+
+[ -n "$repo" ] || { echo "await-mr: --repo is required" >&2; exit 1; }
+[ -d "$repo" ] || { echo "await-mr: no such directory: $repo" >&2; exit 1; }
+[ -n "$mr" ] || [ -n "$branch" ] || { echo "await-mr: need --mr or --branch" >&2; exit 1; }
+[ -n "$task" ] || { echo "await-mr: task text is required after --" >&2; exit 1; }
+[ -f "$HOME/.claude/agents/$role.md" ] || { echo "await-mr: no agent $role" >&2; exit 1; }
+
+logdir="$HOME/.local/state/await-mr"
+mkdir -p "$logdir"
+log="$logdir/$(basename "$repo")-${mr:-$branch}.log"
+say() { echo "$(date '+%d.%m %H:%M:%S')  $*" >> "$log"; }
+
+say "watching ${mr:+MR !$mr}${branch:+branch $branch} in $(basename "$repo") — every ${interval}s, will recruit $role on merge"
+
+# `glab` resolves the GitLab host from the repo's remote, so every call must run
+# inside the repo — the global `glab config get host` (gitlab.com) is not what
+# answers here.
+resolve_iid() {
+    [ -n "$mr" ] && { echo "$mr"; return 0; }
+    cd "$repo" && glab mr list --source-branch "$branch" --all 2>/dev/null \
+        | awk 'match($0,/![0-9]+/) {print substr($0,RSTART+1,RLENGTH-1); exit}'
+}
+
+state_of() {  # $1 = iid
+    cd "$repo" && glab mr view "$1" 2>/dev/null | awk '$1=="state:" {print $2; exit}'
+}
+
+while : ; do
+    iid=$(resolve_iid || true)
+    if [ -z "$iid" ]; then
+        say "MR for branch $branch does not exist yet"
+    else
+        state=$(state_of "$iid" || true)
+        case "${state:-unknown}" in
+            merged)
+                say "MR !$iid is merged — recruiting $role"
+                sha=$(cd "$repo" && glab mr view "$iid" 2>/dev/null | awk '$1=="url:"{print $2; exit}')
+                if (cd "$repo" && recruit "$role" "MR !$iid смержен: ${sha:-см. GitLab}
+
+$task") >>"$log" 2>&1; then
+                    say "$role recruited — done watching"
+                    exit 0
+                fi
+                say "recruit failed — see the lines above; retrying in ${interval}s"
+                ;;
+            closed)
+                say "MR !$iid was CLOSED without merging — nothing to test, stopping"
+                exit 0
+                ;;
+            *)
+                say "MR !$iid state=$state"
+                ;;
+        esac
+    fi
+    sleep "$interval"
+done

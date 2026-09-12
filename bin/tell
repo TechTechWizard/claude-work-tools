@@ -1,0 +1,63 @@
+#!/bin/sh
+# tell — say something to a hired agent and make sure it actually arrived.
+#
+#   tell <agent-name> <text>
+#
+# Why this exists: `herdr agent prompt` pastes the text into the agent's input
+# box, and the submit does not always land — the text sits there unsent and the
+# agent never sees it. That happened five times in one session, in both
+# directions (orchestrator -> agent, and Oleg typing into a pane by hand).
+#
+# `prompt --wait` detects it: from a non-working state it requires an observed
+# state change within 5s and otherwise returns `agent_prompt_stalled`. So:
+#   1. prompt --wait --until working
+#   2. if it stalled, press Enter and check again
+#   3. if it still has not moved, say so loudly instead of assuming delivery
+#
+# Never blindly re-prompt: that is how an agent gets the same task twice.
+
+set -eu
+
+name="${1:-}"
+shift 2>/dev/null || true
+text="${*:-}"
+
+[ -n "$name" ] || { echo "usage: tell <agent-name> <text>   (see: roster)" >&2; exit 1; }
+[ -n "$text" ] || { echo "tell: nothing to say" >&2; exit 1; }
+
+command -v herdr >/dev/null 2>&1 || { echo "tell: herdr not on PATH" >&2; exit 1; }
+
+seq_of() {
+    herdr agent get "$name" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    a = json.load(sys.stdin)["result"]["agent"]
+except Exception:
+    sys.exit(1)
+print(a.get("state_change_seq", -1))
+' 2>/dev/null || echo "-1"
+}
+
+before=$(seq_of)
+[ "$before" = "-1" ] && { echo "tell: no agent named $name (see: roster)" >&2; exit 1; }
+
+out=$(herdr agent prompt "$name" "$text" --wait --until working --timeout 5000 2>&1 || true)
+
+case "$out" in
+    *agent_prompt_stalled* | *timeout*)
+        # The paste landed but the submit did not. Press Enter, do not resend text.
+        herdr agent send-keys "$name" Enter >/dev/null 2>&1 || true
+        sleep 3
+        after=$(seq_of)
+        if [ "$after" = "$before" ]; then
+            echo "tell: NOT DELIVERED to $name — text is sitting in its input box unsent." >&2
+            echo "      Check the pane: herdr agent read $name --source recent --lines 5" >&2
+            echo "      Then focus it and press Enter by hand: herdr agent focus $name" >&2
+            exit 2
+        fi
+        echo "delivered to $name (needed an explicit Enter)"
+        ;;
+    *)
+        echo "delivered to $name"
+        ;;
+esac

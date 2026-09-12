@@ -1,0 +1,93 @@
+#!/bin/sh
+# await — wait until an agent stops working, then say WHY it stopped.
+#
+#   await <agent-name> [--quiet]
+#
+# Why this exists: a bare state watch tells you the agent left `working`, and
+# nothing else. But `idle` means three different things — finished, asked a
+# question and is waiting, or drifted and stopped — and treating them alike is
+# how an agent sits unanswered for an hour. This reads the tail of the pane and
+# classifies, so the notification says what is needed, not just "stopped".
+#
+# It also raises a macOS notification, because a report nobody sees is the same
+# as no report. --quiet skips that.
+
+set -eu
+
+name="${1:-}"
+quiet="${2:-}"
+[ -n "$name" ] || { echo "usage: await <agent-name> [--quiet]   (see: roster)" >&2; exit 1; }
+command -v herdr >/dev/null 2>&1 || { echo "await: herdr not on PATH" >&2; exit 1; }
+
+status_of() {
+    herdr agent get "$name" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    print(json.load(sys.stdin)["result"]["agent"]["agent_status"])
+except Exception:
+    print("missing")
+' 2>/dev/null || echo "missing"
+}
+
+herdr agent get "$name" >/dev/null 2>&1 || { echo "await: no agent named $name" >&2; exit 1; }
+
+# Poll rather than `herdr agent wait`, so a vanished pane ends the watch too.
+i=0
+while [ "$i" -lt 4320 ]; do          # 4320 * 10s = 12h ceiling
+    st=$(status_of)
+    case "$st" in
+        working) sleep 10 ;;
+        *) break ;;
+    esac
+    i=$((i + 1))
+done
+
+st=$(status_of)
+
+verdict=$(herdr agent read "$name" --source recent --lines 60 2>/dev/null | python3 -c '
+import re, sys
+
+tail = sys.stdin.read()
+low = tail.lower()
+
+# An unsent prompt sitting in the input box: the pane shows it after the last rule.
+# `[^\S\n]` and not `\s`, or the whitespace class eats the newline and matches the
+# frame line below an empty prompt — which reads every idle agent as waiting.
+if re.search(r"^[^\S\n]*❯[^\S\n]+\S", tail, re.M) or "[pasted text" in low:
+    print("WAITING-ON-INPUT|has unsent text in its input box — nobody pressed Enter")
+    raise SystemExit
+
+asks = (
+    "скажи", "скажешь", "подтверди", "нужно ли", "заводить ли", "твое решение",
+    "твоё решение", "жду", "say yes", "your call", "confirm", "should i",
+    "прошу", "если скажешь", "по твоему слову",
+)
+blocks = (
+    "не могу", "блокер", "blocked", "permission", "denied", "не удалось",
+    "cannot", "failed to", "нет доступа", "требует",
+)
+
+if any(k in low for k in asks):
+    print("ASKING|finished and is waiting for a decision")
+elif any(k in low for k in blocks):
+    print("BLOCKED|stopped on something it could not do")
+else:
+    print("DONE|finished, no question raised")
+' 2>/dev/null || echo "UNKNOWN|could not read the pane")
+
+kind=${verdict%%|*}
+why=${verdict#*|}
+
+echo "$name stopped — state: $st | $kind: $why"
+
+if [ "$quiet" != "--quiet" ]; then
+    osascript -e "display notification \"$kind — $why\" with title \"$name\"" >/dev/null 2>&1 || true
+    herdr notification show "$name: $kind" --body "$why" --sound done >/dev/null 2>&1 || true
+fi
+
+case "$kind" in
+    DONE) exit 0 ;;
+    ASKING | WAITING-ON-INPUT) exit 3 ;;
+    BLOCKED) exit 4 ;;
+    *) exit 1 ;;
+esac

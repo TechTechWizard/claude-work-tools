@@ -1,0 +1,32 @@
+#!/bin/sh
+# roster — who is currently hired, what state they are in, what they are doing.
+set -eu
+
+command -v herdr >/dev/null 2>&1 || { echo "roster: herdr not on PATH" >&2; exit 1; }
+herdr status server >/dev/null 2>&1 || { echo "roster: herdr server is not running" >&2; exit 1; }
+
+herdr agent list | python3 -c '
+import json, sys, os
+
+agents = json.load(sys.stdin)["result"]["agents"]
+if not agents:
+    print("nobody hired")
+    raise SystemExit(0)
+
+rows = []
+for a in agents:
+    rows.append((
+        a.get("name") or "(unnamed)",
+        a.get("agent_status", "?"),
+        a.get("agent", "?"),
+        os.path.basename(a.get("cwd", "")) or "/",
+        (a.get("terminal_title_stripped") or "")[:44],
+    ))
+
+widths = [max(len(r[i]) for r in rows + [("AGENT", "STATE", "KIND", "WHERE", "DOING")]) for i in range(5)]
+fmt = "  ".join("{:<%d}" % w for w in widths)
+print(fmt.format("AGENT", "STATE", "KIND", "WHERE", "DOING"))
+order = {"blocked": 0, "done": 1, "working": 2, "idle": 3}
+for r in sorted(rows, key=lambda r: (order.get(r[1], 9), r[0])):
+    print(fmt.format(*r))
+'
