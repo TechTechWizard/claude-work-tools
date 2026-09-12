@@ -1,0 +1,6 @@
+# What is particular about this repository, for `claude-setup check`.
+#
+# It holds executables and nothing else: no skills, no agents, no tools/ in the
+# sense the checker means (the directory here is bin/). Most invariants therefore
+# come back not applicable, and the ones that matter are the last five — this
+# repository is handed to other people, so nothing of the author's may be in it.
