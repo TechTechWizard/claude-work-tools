@@ -11,7 +11,7 @@ declare them as a prerequisite.
 
 | Tool | What it does | Needs |
 |---|---|---|
-| `clickup` | Read and write ClickUp: tasks, lists, comments, attachments, tags, assignees, estimates | python3, an API token |
+| `clickup` | Read and write ClickUp: tasks, lists, comments, attachments, tags, assignees, estimates, task deletion | python3, an API token |
 | `recruit` | Hire an agent into its own herdr pane, optionally on a fresh git worktree | herdr |
 | `roster` | Show who is hired and what each one is doing | herdr |
 | `fire` | Dismiss an agent and close its pane | herdr |
@@ -67,6 +67,17 @@ belongs to and which workspace it can see, and caches both in
 guessed at, so the CLI prints them and asks you to pick one by writing
 `{"workspace_id": "<id>"}` into that file.
 
+**A second configuration, for tests.** `CLICKUP_CONFIG_DIR` moves both the token and the
+cached ids somewhere else for one run:
+
+```sh
+CLICKUP_CONFIG_DIR=/tmp/clickup-test clickup my-tasks
+```
+
+That keeps an automated run away from your own credentials. It does not isolate ClickUp
+itself: there is no sandbox workspace, so anything a test creates is a real task. Point
+such tests at a list kept for them, and clean up with `clickup delete`.
+
 **herdr** is configured by herdr itself; these tools only read its state and talk to its
 socket.
 
@@ -88,11 +99,18 @@ not exist — or that lives in a workspace your token cannot see — both return
 `401 {"err":"Team not authorized","ECODE":"OAUTH_027"}`. Check the id before you go
 looking at your token.
 
+**Deleting a task.** `clickup delete <task_id>` names what it removed before it goes, and
+ClickUp keeps deleted tasks in the workspace Trash for 30 days, so a wrong id is
+recoverable through the web interface.
+
 ## Known issues
 
-`clickup spaces` returns an empty list on some tokens: the API answers `{"spaces":[]}`
-for the workspace even when spaces plainly exist. Nothing in the CLI filters them out.
-Use `clickup lists` and `clickup my-tasks`, which are unaffected.
+**Spaces are invisible to a member who reaches projects through shared folders.**
+`GET /team/{id}/space` answers `{"spaces":[]}` for such a token even though the spaces
+exist and their folders are reachable by id. `clickup spaces` falls back to the shared
+hierarchy and, when that is empty too, says so instead of printing an empty table. There
+is no command that lists the shared folders yet, so the practical way to find a list id
+is `clickup my-tasks` and then the task's own list.
 
 ## Requirements
 

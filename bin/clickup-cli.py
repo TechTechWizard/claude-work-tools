@@ -17,7 +17,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
 # Configuration
-CONFIG_DIR = Path.home() / ".config" / "clickup"
+CONFIG_DIR = Path(os.environ.get("CLICKUP_CONFIG_DIR") or Path.home() / ".config" / "clickup")
 TOKEN_FILE = CONFIG_DIR / "token"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 API_BASE = "https://api.clickup.com/api/v2"
@@ -264,7 +264,7 @@ def get_token():
     """Read API token from config file."""
     if not TOKEN_FILE.exists():
         print(f"Error: Token file not found at {TOKEN_FILE}", file=sys.stderr)
-        print("Create it with: echo 'your_token' > ~/.config/clickup/token", file=sys.stderr)
+        print(f"Create it with: echo 'your_token' > {TOKEN_FILE}", file=sys.stderr)
         sys.exit(1)
     return TOKEN_FILE.read_text().strip()
 
@@ -351,7 +351,9 @@ def api_request(endpoint, method="GET", data=None):
 
     try:
         with urlopen(req) as response:
-            return json.loads(response.read().decode("utf-8"))
+            body = response.read().decode("utf-8")
+            # A successful DELETE answers with an empty body; everything else is JSON.
+            return json.loads(body) if body.strip() else {}
     except HTTPError as e:
         error_body = e.read().decode("utf-8")
         print(f"API Error {e.code}: {error_body}", file=sys.stderr)
@@ -442,11 +444,25 @@ def cmd_my_tasks(args):
 
 
 def cmd_spaces(args):
-    """List all spaces in workspace."""
-    result = api_request(f"team/{get_workspace_id()}/space")
-    spaces = result.get("spaces", [])
+    """List the spaces this token can see."""
+    workspace = get_workspace_id()
+    spaces = api_request(f"team/{workspace}/space").get("spaces", [])
 
-    print(f"\nSpaces ({len(spaces)}):\n")
+    # A token whose access comes from folders shared with it gets an empty list here —
+    # the spaces exist, they are simply not the route by which this user reaches them.
+    # The shared hierarchy is that route, so fall back to it rather than report nothing.
+    shared = False
+    if not spaces:
+        spaces = api_request(f"team/{workspace}/shared").get("shared", {}).get("spaces") or []
+        shared = bool(spaces)
+
+    if not spaces:
+        print("\nNo spaces are visible to this token.")
+        print("Spaces reached through shared folders do not appear here; use `folders` and")
+        print("`lists` with an id you already know, or `my-tasks` to find one.")
+        return
+
+    print(f"\nSpaces ({len(spaces)}{', shared with you' if shared else ''}):\n")
     print(f"{'Name':<40} {'ID'}")
     print("-" * 55)
 
@@ -651,6 +667,17 @@ def cmd_delete_comment(args):
     print(f"Comment {args.comment_id} deleted.")
 
 
+def cmd_delete(args):
+    """Delete a task."""
+    # Read the task first so the confirmation names what went, not just an id — an id
+    # alone tells you nothing about whether you deleted the right thing.
+    task = api_request(f"task/{args.task_id}")
+    name = task.get("name", "(no name)")
+    api_request(f"task/{args.task_id}", method="DELETE")
+    print(f"Deleted {args.task_id}: {name}")
+    print("ClickUp keeps deleted tasks in the workspace Trash for 30 days.")
+
+
 def cmd_tag(args):
     """Add or remove a tag on a task."""
     from urllib.parse import quote
@@ -825,6 +852,11 @@ def main():
     p_del_comment = subparsers.add_parser("delete-comment", help="Delete a comment")
     p_del_comment.add_argument("comment_id", help="Comment ID")
     p_del_comment.set_defaults(func=cmd_delete_comment)
+
+    # delete
+    p_delete = subparsers.add_parser("delete", help="Delete a task")
+    p_delete.add_argument("task_id", help="Task ID")
+    p_delete.set_defaults(func=cmd_delete)
 
     # tag
     p_tag = subparsers.add_parser("tag", help="Add/remove a tag on a task")
