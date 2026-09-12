@@ -15,21 +15,8 @@ jobs:
         with:
           enable-cache: true
 
-      # claude-setup-kit is a private repository, so CI needs a token that can
-      # read it. Create a fine-grained PAT with read access to
-      # TechTechWizard/claude-setup-kit and store it as the KIT_TOKEN secret.
-      # Without it this job stops and says so rather than passing on no checks:
-      # a green tick for a run that checked nothing is worse than a red one.
-      - name: Check for the token
-        id: token
-        run: |
-          if [ -z "${{ secrets.KIT_TOKEN }}" ]; then
-            echo "::error::KIT_TOKEN is not set — claude-setup-kit is private and cannot be installed, so nothing was checked. Add the secret, or run 'make check' locally."
-            exit 1
-          fi
-
       - name: Install the checker
-        run: uv tool install git+https://x-access-token:${{ secrets.KIT_TOKEN }}@github.com/TechTechWizard/claude-setup-kit
+        run: uv tool install git+https://github.com/TechTechWizard/claude-setup-kit
 
       - name: Check
         run: claude-setup check . --no-colour
