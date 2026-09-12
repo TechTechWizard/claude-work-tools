@@ -81,6 +81,38 @@ such tests at a list kept for them, and clean up with `clickup delete`.
 **herdr** is configured by herdr itself; these tools only read its state and talk to its
 socket.
 
+## Roles: where `recruit` finds them
+
+A role is a native Claude Code agent definition, and `recruit` accepts it from either of
+the two places Claude Code itself reads. The first is a file in `~/.claude/agents/`, known
+by its bare basename. The second is any enabled plugin that ships agents, where Claude Code
+lists the role under the namespaced name `<plugin>:<role>` — `recruit --roles` prints every
+role from both places under the name you can pass back to it.
+
+Both spellings work when you hire. A qualified name names exactly one definition:
+
+```sh
+recruit dev-flow:back "fix the import"    # the role from the dev-flow plugin
+recruit local:back "fix the import"       # the file ~/.claude/agents/back.md
+```
+
+A bare name is expanded whenever exactly one definition answers to it, which is the usual
+case and keeps the command short:
+
+```sh
+recruit back "fix the import"
+```
+
+When two definitions answer to the same bare name, `recruit` refuses and prints both
+candidates rather than picking one. This is deliberate, and it is not redundant with
+Claude Code: `claude --agent probe` with two plugins defining `probe` picks one of them
+silently, which is the failure this refusal exists to prevent.
+
+The same two spellings are valid keys in a project's `.roster`, so a `.roster` written
+before its roles moved into a plugin keeps working with no edit. Tab and agent names stay
+bare — a hire of `dev-flow:back` lands in a tab called `back-1` — so a namespaced role
+never puts a colon into a herdr label.
+
 ## Two things the ClickUp API does not tell you
 
 **`create` assigns you.** Every task created through the CLI lands in the creator's list.
@@ -110,6 +142,16 @@ Start there rather than with `spaces`: `GET /team/{id}/space` answers `{"spaces"
 anyone who reaches projects through shared folders rather than by owning the space, which
 is most people, and both `folders` and `lists` need a space id that such a token can never
 obtain. `clickup spaces` says so plainly instead of printing an empty table.
+
+## Two GitLab queries the tools do not wrap
+
+Both are one `glab` command with no assembly around them, so they are written down here
+instead of being given a tool or a skill of their own:
+
+```sh
+glab mr list --reviewer=@me   # what is waiting on me for review
+glab ci status                # the pipeline on the current branch
+```
 
 ## Known issues
 

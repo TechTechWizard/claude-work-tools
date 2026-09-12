@@ -7,9 +7,10 @@
 #                                                   ... of a named repository
 #   recruit --roles                                 list available agents
 #
-# Roles are native Claude Code agent definitions in ~/.claude/agents/<role>.md —
-# the same files the Task tool uses for subagents. Their frontmatter owns the
-# tools, model and description; this script only places them in a herdr pane.
+# Roles are native Claude Code agent definitions: either a file in ~/.claude/agents/
+# or an agent shipped by an installed plugin. Their frontmatter owns the tools, model
+# and description; this script only places them in a herdr pane. A role from a plugin
+# is written <plugin>:<role>, and a bare name is accepted whenever it is unambiguous.
 #
 #   <project>/.roster   optional "<role> <path-relative-to-project>" per line
 #
@@ -28,11 +29,47 @@ WORKTREE_DIR="${RECRUIT_WORKTREE_DIR:-$HOME/.herdr/worktrees}"
 
 die() { echo "recruit: $*" >&2; exit 1; }
 
-if [ "${1:-}" = "--roles" ]; then
+TAB=$(printf '\t')
+
+# --- where role definitions live -------------------------------------------------
+# Two sources feed one list. A local definition is a file in $AGENTS_DIR, and Claude
+# Code knows it by its bare basename. A plugin definition lives in the directory that
+# `claude plugin list --json` reports for every enabled plugin, and Claude Code lists
+# it under the namespaced name <plugin>:<role>. Asking the CLI beats globbing the
+# plugin cache by hand: the cache also holds disabled plugins and stale versions.
+# Every line printed here is "<namespace>:<role><TAB><path>", where the namespace
+# `local` stands for $AGENTS_DIR.
+all_roles() {
     for f in "$AGENTS_DIR"/*.md; do
         [ -f "$f" ] || continue
-        name=$(basename "$f" .md)
-        printf '%-24s %s\n' "$name" "$(sed -n 's/^description: //p' "$f" | cut -c1-80)"
+        printf 'local:%s\t%s\n' "$(basename "$f" .md)" "$f"
+    done
+    command -v claude >/dev/null 2>&1 || return 0
+    claude plugin list --json 2>/dev/null | python3 -c '
+import glob, json, os, sys
+try:
+    plugins = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for p in plugins:
+    if not p.get("enabled"):
+        continue
+    plugin = str(p.get("id") or "").split("@")[0]
+    path = p.get("installPath") or ""
+    if not plugin or not path:
+        continue
+    for f in sorted(glob.glob(os.path.join(path, "agents", "*.md"))):
+        print("%s:%s\t%s" % (plugin, os.path.basename(f)[:-3], f))
+' 2>/dev/null || true
+}
+
+if [ "${1:-}" = "--roles" ]; then
+    all_roles | while IFS="$TAB" read -r qualified path; do
+        case "$qualified" in
+            local:*) shown=${qualified#local:} ;;
+            *)       shown=$qualified ;;
+        esac
+        printf '%-28s %s\n' "$shown" "$(sed -n 's/^description: //p' "$path" | cut -c1-72)"
     done
     exit 0
 fi
@@ -66,7 +103,43 @@ task="$*"
 
 [ -n "$worktree" ] || [ -z "$repo_opt" ] || die "--repo only makes sense together with --worktree"
 
-[ -f "$AGENTS_DIR/$role.md" ] || die "no agent $AGENTS_DIR/$role.md (see: recruit --roles)"
+# --- resolving the name that was typed -------------------------------------------
+# Both spellings are accepted. A qualified name (`dev-flow:back`, or `local:back` for a
+# file in $AGENTS_DIR) names exactly one definition and always works. A bare `back` is
+# expanded when exactly one definition answers to it, and on a collision recruit prints
+# the candidates instead of guessing. Demanding the prefix always was the alternative,
+# and it was rejected: it taxes every command and every `.roster` line in every project
+# to forestall a collision that may never happen, whereas here only the collision pays.
+# The refusal is not redundant with Claude Code, which does guess: with two plugins
+# defining `probe` it picked one of them silently (verified 13.09.2026).
+resolve_role() {
+    all_roles | awk -F"$TAB" -v want="$1" '
+        {
+            colon = index($1, ":")
+            ns = substr($1, 1, colon - 1)
+            role = substr($1, colon + 1)
+            if ($1 == want || role == want) print ns "\t" role "\t" $2
+        }
+    '
+}
+
+matches=$(resolve_role "$role")
+[ -n "$matches" ] || die "no role $role (see: recruit --roles)"
+if [ "$(printf '%s\n' "$matches" | wc -l)" -gt 1 ]; then
+    {
+        echo "recruit: $role is defined in more than one place — name one of:"
+        printf '%s\n' "$matches" | awk -F"$TAB" '{ printf "  %s:%s\n", $1, $2 }'
+    } >&2
+    exit 1
+fi
+
+role_ns=$(printf '%s\n' "$matches" | cut -f1)
+role_short=$(printf '%s\n' "$matches" | cut -f2)
+if [ "$role_ns" = "local" ]; then
+    agent_name="$role_short"
+else
+    agent_name="$role_ns:$role_short"
+fi
 
 command -v herdr >/dev/null 2>&1 || die "herdr not on PATH"
 herdr status server >/dev/null 2>&1 || die "herdr server is not running — start it with 'herdr'"
@@ -85,7 +158,10 @@ project_label=$(basename "$project_root")
 # --- where this role works -----------------------------------------------------
 role_cwd="$project_root"
 if [ -f "$project_root/.roster" ]; then
-    rel=$(awk -v r="$role" '$1==r {print $2; exit}' "$project_root/.roster")
+    # Either spelling is a valid key, so a `.roster` written before the roles moved
+    # into a plugin keeps working unchanged.
+    rel=$(awk -v r="$agent_name" '$1==r {print $2; exit}' "$project_root/.roster")
+    [ -n "$rel" ] || rel=$(awk -v r="$role_short" '$1==r {print $2; exit}' "$project_root/.roster")
     [ -n "$rel" ] && role_cwd="$project_root/$rel"
 fi
 [ -d "$role_cwd" ] || die "role directory does not exist: $role_cwd"
@@ -160,7 +236,7 @@ for a in agents:
         if tail.isdigit():
             used.append(int(tail))
 print("%s-%d" % (role, max(used) + 1 if used else 1))
-' "$role"
+' "$role_short"
 }
 name=$(next_name)
 
@@ -277,7 +353,9 @@ ready_probe 0 || die "pane $pane never reached a shell prompt in ${READY_TIMEOUT
 
 # --- launch the agent ---------------------------------------------------------
 # `--agent` is native: Claude Code loads the definition, its tool restrictions and
-# its model from ~/.claude/agents/<role>.md.
+# its model, whether it came from ~/.claude/agents/ or from a plugin. The pane and the
+# herdr agent are named after the bare role, so a namespaced role does not put a colon
+# into a tab label.
 #
 # herdr can still report the pane as busy for a moment after the probe command
 # exits, so retry. Each retry runs another probe, which both re-confirms the shell
@@ -290,7 +368,7 @@ settle() { herdr pane wait-output "$pane" --match "__never_${$}__" --timeout 120
 
 attempt=1
 until herdr agent start "$name" --kind "$AGENT_KIND" --pane "$pane" --timeout 180000 \
-        -- --agent "$role" >/dev/null 2>&1; do
+        -- --agent "$agent_name" >/dev/null 2>&1; do
     attempt=$((attempt + 1))
     [ "$attempt" -gt 10 ] && die "pane $pane stayed busy after 10 attempts — check it with 'herdr pane read $pane'"
     settle
@@ -301,7 +379,7 @@ until herdr agent start "$name" --kind "$AGENT_KIND" --pane "$pane" --timeout 18
         herdr pane rename "$pane" "$name" >/dev/null 2>&1 || true
     fi
 done
-echo "hired $name  role=$role  cwd=$role_cwd  pane=$pane"
+echo "hired $name  role=$agent_name  cwd=$role_cwd  pane=$pane"
 
 [ -n "$task" ] || exit 0
 
