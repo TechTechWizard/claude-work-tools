@@ -45,22 +45,55 @@ all_roles() {
         printf 'local:%s\t%s\n' "$(basename "$f" .md)" "$f"
     done
     command -v claude >/dev/null 2>&1 || return 0
-    claude plugin list --json 2>/dev/null | python3 -c '
-import glob, json, os, sys
-try:
-    plugins = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
+    python3 -c "
+import glob, json, os, subprocess
+
+def cli(*args):
+    try:
+        out = subprocess.run([\"claude\", *args], capture_output=True, text=True, timeout=30)
+        return json.loads(out.stdout)
+    except Exception:
+        return None
+
+plugins = cli(\"plugin\", \"list\", \"--json\") or []
+markets = {}
+for m in cli(\"plugin\", \"marketplace\", \"list\", \"--json\") or []:
+    if m.get(\"name\"):
+        markets[m[\"name\"]] = m.get(\"installLocation\")
+
+# A directory-source marketplace is served live from its working copy, while the copy
+# under ~/.claude/plugins/cache can be older than it — on 13.09.2026 the cache was
+# missing an agents/ directory the working copy already had. So resolve the plugin
+# directory through the marketplace manifest first and keep installPath as the fallback.
+def live_dir(plugin, marketplace, fallback):
+    root = markets.get(marketplace)
+    if root:
+        try:
+            with open(os.path.join(root, \".claude-plugin\", \"marketplace.json\")) as fh:
+                for entry in json.load(fh).get(\"plugins\", []):
+                    if entry.get(\"name\") != plugin:
+                        continue
+                    src = entry.get(\"source\")
+                    if isinstance(src, dict):
+                        src = src.get(\"path\") or src.get(\"source\")
+                    if isinstance(src, str):
+                        return os.path.normpath(os.path.join(root, src))
+        except Exception:
+            pass
+    return fallback
+
 for p in plugins:
-    if not p.get("enabled"):
+    if not p.get(\"enabled\"):
         continue
-    plugin = str(p.get("id") or "").split("@")[0]
-    path = p.get("installPath") or ""
-    if not plugin or not path:
+    plugin, _, marketplace = str(p.get(\"id\") or \"\").partition(\"@\")
+    if not plugin:
         continue
-    for f in sorted(glob.glob(os.path.join(path, "agents", "*.md"))):
-        print("%s:%s\t%s" % (plugin, os.path.basename(f)[:-3], f))
-' 2>/dev/null || true
+    path = live_dir(plugin, marketplace, p.get(\"installPath\") or \"\")
+    if not path:
+        continue
+    for f in sorted(glob.glob(os.path.join(path, \"agents\", \"*.md\"))):
+        print(\"%s:%s\\t%s\" % (plugin, os.path.basename(f)[:-3], f))
+" 2>/dev/null || true
 }
 
 if [ "${1:-}" = "--roles" ]; then
