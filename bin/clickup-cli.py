@@ -458,8 +458,8 @@ def cmd_spaces(args):
 
     if not spaces:
         print("\nNo spaces are visible to this token.")
-        print("Spaces reached through shared folders do not appear here; use `folders` and")
-        print("`lists` with an id you already know, or `my-tasks` to find one.")
+        print("Spaces reached through shared folders do not appear here — run `clickup shared`,")
+        print("which lists those folders with their lists.")
         return
 
     print(f"\nSpaces ({len(spaces)}{', shared with you' if shared else ''}):\n")
@@ -470,6 +470,42 @@ def cmd_spaces(args):
         name = space.get("name", "")[:39]
         space_id = space.get("id", "")
         print(f"{name:<40} {space_id}")
+
+
+def cmd_shared(args):
+    """List the folders and lists shared with this token.
+
+    This is the entry point to the hierarchy for anyone who is not an admin of the
+    workspace: `folders` and `lists` both need a space id, and a member who reaches
+    projects through shared folders can never obtain one. The shared payload carries
+    each folder's lists inline, so one request is the whole map.
+    """
+    shared = api_request(f"team/{get_workspace_id()}/shared").get("shared", {})
+    folders = shared.get("folders") or []
+    lists = shared.get("lists") or []
+
+    if not folders and not lists:
+        print("\nNothing is shared with this token.")
+        return
+
+    if folders:
+        print(f"\nFolders ({len(folders)}):\n")
+        print(f"{'Name':<40} {'ID':<16} Tasks")
+        print("-" * 66)
+        for folder in folders:
+            name = folder.get("name", "")[:39]
+            print(f"{name:<40} {folder.get('id', ''):<16} {folder.get('task_count', '')}")
+            for lst in folder.get("lists") or []:
+                list_name = "  └─ " + lst.get("name", "")[:34]
+                print(f"{list_name:<40} {lst.get('id', ''):<16} {lst.get('task_count', '')}")
+
+    if lists:
+        print(f"\nLists outside folders ({len(lists)}):\n")
+        print(f"{'Name':<40} {'ID':<16} Tasks")
+        print("-" * 66)
+        for lst in lists:
+            name = lst.get("name", "")[:39]
+            print(f"{name:<40} {lst.get('id', ''):<16} {lst.get('task_count', '')}")
 
 
 def cmd_folders(args):
@@ -852,6 +888,10 @@ def main():
     p_del_comment = subparsers.add_parser("delete-comment", help="Delete a comment")
     p_del_comment.add_argument("comment_id", help="Comment ID")
     p_del_comment.set_defaults(func=cmd_delete_comment)
+
+    # shared
+    p_shared = subparsers.add_parser("shared", help="List folders and lists shared with you")
+    p_shared.set_defaults(func=cmd_shared)
 
     # delete
     p_delete = subparsers.add_parser("delete", help="Delete a task")

@@ -103,14 +103,18 @@ looking at your token.
 ClickUp keeps deleted tasks in the workspace Trash for 30 days, so a wrong id is
 recoverable through the web interface.
 
+**Finding a list id.** `clickup shared` prints every folder shared with you and the lists
+inside it, with task counts — that id is what `tasks`, `create` and the rest take.
+
+Start there rather than with `spaces`: `GET /team/{id}/space` answers `{"spaces":[]}` for
+anyone who reaches projects through shared folders rather than by owning the space, which
+is most people, and both `folders` and `lists` need a space id that such a token can never
+obtain. `clickup spaces` says so plainly instead of printing an empty table.
+
 ## Known issues
 
-**Spaces are invisible to a member who reaches projects through shared folders.**
-`GET /team/{id}/space` answers `{"spaces":[]}` for such a token even though the spaces
-exist and their folders are reachable by id. `clickup spaces` falls back to the shared
-hierarchy and, when that is empty too, says so instead of printing an empty table. There
-is no command that lists the shared folders yet, so the practical way to find a list id
-is `clickup my-tasks` and then the task's own list.
+None recorded. What used to be here — an empty `spaces` listing with no way forward — is
+the paragraph above, and it now has a route that works.
 
 ## Requirements
 
