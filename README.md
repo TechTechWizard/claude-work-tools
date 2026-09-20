@@ -3,6 +3,10 @@
 Command-line tools that a Claude Code session uses to reach the systems work actually
 lives in: tasks in ClickUp, and agents running in [herdr](https://herdr.dev) panes.
 
+**Only `clickup` is useful on its own.** The other six — `recruit`, `roster`, `tell`,
+`await`, `await-mr`, `fire` — drive agents inside herdr panes and do nothing without
+herdr installed.
+
 They are plain executables, not a Claude Code plugin. A plugin cannot carry executables
 through a marketplace, so these install on their own and the plugins that use them
 declare them as a prerequisite.
@@ -25,7 +29,7 @@ useful on its own, and most people come for that one.
 ## Install
 
 ```sh
-git clone git@github.com:TechTechWizard/claude-work-tools.git
+git clone https://github.com/TechTechWizard/claude-work-tools.git
 cd claude-work-tools
 ./install.sh
 ```
@@ -162,3 +166,7 @@ the paragraph above, and it now has a route that works.
 
 macOS or Linux, python3 (3.7 or newer; only the standard library is used, there is
 nothing to pip install), and for the agent tools, herdr.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
