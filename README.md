@@ -5,10 +5,6 @@ comments, attachments, tags, assignees, estimates. It is a plain executable, not
 a skill cannot carry an executable, so this installs on its own and the `clickup` skill
 from [skills](https://github.com/TechTechWizard/skills) names it as a prerequisite.
 
-The six wrappers that drove agents in herdr panes used to live here too. They are the
-teamlead set now and moved to [orchestrator](https://github.com/TechTechWizard/orchestrator)
-on 24.09.2026; a developer who comes for the ClickUp CLI does not need them.
-
 ## What is here
 
 | Tool | What it does | Needs |
