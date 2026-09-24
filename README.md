@@ -1,30 +1,19 @@
 # claude-work-tools
 
-Command-line tools that a Claude Code session uses to reach the systems work actually
-lives in: tasks in ClickUp, and agents running in [herdr](https://herdr.dev) panes.
+The command-line tool a Claude Code session uses to reach ClickUp: tasks, lists,
+comments, attachments, tags, assignees, estimates. It is a plain executable, not a skill:
+a skill cannot carry an executable, so this installs on its own and the `clickup` skill
+from [skills](https://github.com/TechTechWizard/skills) names it as a prerequisite.
 
-**Only `clickup` is useful on its own.** The other six — `recruit`, `roster`, `tell`,
-`await`, `await-mr`, `fire` — drive agents inside herdr panes and do nothing without
-herdr installed.
-
-They are plain executables, not a Claude Code plugin. A plugin cannot carry executables
-through a marketplace, so these install on their own and the plugins that use them
-declare them as a prerequisite.
+The six wrappers that drove agents in herdr panes used to live here too. They are the
+teamlead set now and moved to [orchestrator](https://github.com/TechTechWizard/orchestrator)
+on 24.09.2026; a developer who comes for the ClickUp CLI does not need them.
 
 ## What is here
 
 | Tool | What it does | Needs |
 |---|---|---|
 | `clickup` | Read and write ClickUp: tasks, lists, comments, attachments, tags, assignees, estimates, task deletion | python3, an API token |
-| `recruit` | Hire an agent into its own herdr pane, optionally on a fresh git worktree | herdr |
-| `roster` | Show who is hired and what each one is doing | herdr |
-| `fire` | Dismiss an agent and close its pane | herdr |
-| `tell` | Send text to an agent — safer than `herdr agent prompt`, which can paste without submitting and lose the message | herdr |
-| `await` | Wait for an agent and tell apart the three states herdr shows identically: finished, asked a question, drifted | herdr |
-| `await-mr` | The same wait, tied to a merge request appearing | herdr, glab |
-
-The six herdr tools are useful only if you drive agents from panes. The ClickUp CLI is
-useful on its own, and most people come for that one.
 
 ## Install
 
@@ -34,9 +23,8 @@ cd claude-work-tools
 ./install.sh
 ```
 
-The installer links the tools into `~/.local/bin` and then reports which prerequisites
-you have and which you do not. Nothing is fatal: a missing prerequisite disables the
-tools that need it and leaves the rest working.
+The installer links the CLI into `~/.local/bin` as `clickup` and then reports which
+prerequisites you have and which you do not: python3 and the token.
 
 It links rather than copies, so the checkout has to stay where you put it — moving it
 breaks the links, and `./install.sh` from the new location repairs them. `./install.sh
@@ -50,8 +38,8 @@ somewhere other than `~/.local/bin`. An existing file of your own is moved aside
 git pull && ./install.sh --check
 ```
 
-The links point into the checkout, so `git pull` alone already updates the tools. The
-`--check` is there for the case where a new tool was added and needs a new link.
+The link points into the checkout, so `git pull` alone already updates the CLI. The
+`--check` is there for the case where the link went missing.
 
 ## Configuration
 
@@ -81,41 +69,6 @@ CLICKUP_CONFIG_DIR=/tmp/clickup-test clickup my-tasks
 That keeps an automated run away from your own credentials. It does not isolate ClickUp
 itself: there is no sandbox workspace, so anything a test creates is a real task. Point
 such tests at a list kept for them, and clean up with `clickup delete`.
-
-**herdr** is configured by herdr itself; these tools only read its state and talk to its
-socket.
-
-## Roles: where `recruit` finds them
-
-A role is a native Claude Code agent definition, and `recruit` accepts it from either of
-the two places Claude Code itself reads. The first is a file in `~/.claude/agents/`, known
-by its bare basename. The second is any enabled plugin that ships agents, where Claude Code
-lists the role under the namespaced name `<plugin>:<role>` — `recruit --roles` prints every
-role from both places under the name you can pass back to it.
-
-Both spellings work when you hire. A qualified name names exactly one definition:
-
-```sh
-recruit dev-flow:back "fix the import"    # the role from the dev-flow plugin
-recruit local:back "fix the import"       # the file ~/.claude/agents/back.md
-```
-
-A bare name is expanded whenever exactly one definition answers to it, which is the usual
-case and keeps the command short:
-
-```sh
-recruit back "fix the import"
-```
-
-When two definitions answer to the same bare name, `recruit` refuses and prints both
-candidates rather than picking one. This is deliberate, and it is not redundant with
-Claude Code: `claude --agent probe` with two plugins defining `probe` picks one of them
-silently, which is the failure this refusal exists to prevent.
-
-The same two spellings are valid keys in a project's `.roster`, so a `.roster` written
-before its roles moved into a plugin keeps working with no edit. Tab and agent names stay
-bare — a hire of `dev-flow:back` lands in a tab called `back-1` — so a namespaced role
-never puts a colon into a herdr label.
 
 ## Two things the ClickUp API does not tell you
 
@@ -165,7 +118,7 @@ the paragraph above, and it now has a route that works.
 ## Requirements
 
 macOS or Linux, python3 (3.7 or newer; only the standard library is used, there is
-nothing to pip install), and for the agent tools, herdr.
+nothing to pip install).
 
 ## Licence
 
