@@ -1,5 +1,5 @@
 #!/bin/sh
-# install.sh — put these tools on the PATH by linking them into ~/.local/bin.
+# install.sh — put the ClickUp CLI on the PATH by linking it into ~/.local/bin.
 #
 #   ./install.sh            link everything, report what changed
 #   ./install.sh --check    report what would change, touch nothing
@@ -16,7 +16,7 @@ BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
 CHECK=0
 [ "${1:-}" = "--check" ] && CHECK=1
 
-TOOLS="clickup-cli.py recruit roster fire tell await await-mr"
+TOOLS="clickup-cli.py"
 
 changed=0
 note() { printf '%s\n' "$*"; }
@@ -66,8 +66,8 @@ if [ "$CHECK" = "1" ]; then
 fi
 [ "$changed" = "0" ] && note "everything was already linked" || note "$changed link(s) updated"
 
-# Prerequisites. None of these stop the installation: every tool degrades to a clear
-# message instead of a stack trace, and some of them are wanted by only one user in ten.
+# Prerequisites. None of these stop the installation: the CLI degrades to a clear
+# message instead of a stack trace.
 note ""
 note "Prerequisites:"
 
@@ -90,17 +90,4 @@ else
     note "          echo 'pk_your_personal_token' > ~/.config/clickup/token"
     note "        Get the token at ClickUp -> Settings -> Apps -> API Token."
     note "        The workspace and your user id are discovered on first use."
-fi
-
-if command -v herdr >/dev/null 2>&1; then
-    note "  ok    herdr — the orchestration scripts can run"
-else
-    note "  MISS  herdr — recruit, roster, fire, tell, await and await-mr need it."
-    note "        The ClickUp CLI does not; ignore this if you only came for that."
-fi
-
-if command -v glab >/dev/null 2>&1; then
-    note "  ok    glab — await-mr can watch merge requests"
-else
-    note "  MISS  glab — only await-mr needs it (brew install glab, then glab auth login)"
 fi
