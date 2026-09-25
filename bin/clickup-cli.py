@@ -606,6 +606,10 @@ def cmd_task(args):
     print(f"Task: {task.get('name', 'N/A')}")
     print(f"{'='*60}")
     print(f"ID:       {task.get('id', 'N/A')}")
+    # A subtask reports its parent's id here, and `—` means there is none. Without
+    # this line the only way to confirm `create --parent` did its job was to import
+    # the script as a module and call the API by hand.
+    print(f"Parent:   {task.get('parent') or '—'}")
     print(f"Status:   {task.get('status', {}).get('status', 'N/A')}")
     print(f"Priority: {task.get('priority', {}).get('priority', 'none') if task.get('priority') else 'none'}")
 

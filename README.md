@@ -88,6 +88,9 @@ looking at your token.
 ClickUp keeps deleted tasks in the workspace Trash for 30 days, so a wrong id is
 recoverable through the web interface.
 
+**A subtask names its parent.** The `task` card has a `Parent:` line with the parent's
+id, and `—` when there is none — that is how `create --parent` is checked.
+
 **Finding a list id.** `clickup shared` prints every folder shared with you and the lists
 inside it, with task counts — that id is what `tasks`, `create` and the rest take.
 
