@@ -260,6 +260,159 @@ def markdown_to_blocks(text):
     return blocks or [{"text": text}]
 
 
+_MARKDOWN_ESCAPE = re.compile(r'([*`])')
+_LINE_START_MARKER = re.compile(r'^(\s*)(#{1,6} |> |[-+] |\d+[.)] |```|~~~)')
+
+
+def _escape_markdown(text):
+    """Escape the characters in a plain segment that the renderer uses as markup.
+
+    Without this a comment posted with `--plain` and containing a literal
+    `**x**` would print exactly like one where ClickUp rendered the bold, and
+    the whole point of rendering is that the two look different. Only `*` and
+    the backtick are escaped inside a line: the renderer never emits `_` as
+    markup (italic comes out as `*text*`), and snake_case identifiers are far
+    more common in comments than italic underscores. A block marker at the
+    start of a plain line (`# `, `> `, `- `, `1. `, a fence) is escaped for
+    the same reason.
+    """
+    text = _MARKDOWN_ESCAPE.sub(r'\\\1', text)
+    return _LINE_START_MARKER.sub(r'\1\\\2', text)
+
+
+def _render_inline(runs):
+    """Render one line's inline runs — (text, attributes) pairs — as markdown.
+
+    Adjacent runs with the same inline attributes are merged first, because
+    ClickUp splits a formatted span wherever it likes and `**a****b**` is not
+    bold. Whitespace at either edge of a run is moved outside the markers,
+    since `**text **` does not parse as bold either.
+    """
+    merged = []
+    for text, attrs in runs:
+        inline = {k: v for k, v in (attrs or {}).items() if k in ("bold", "italic", "code", "link")}
+        if merged and merged[-1][1] == inline:
+            merged[-1][0] += text
+        else:
+            merged.append([text, inline])
+
+    out = []
+    for text, inline in merged:
+        if not text:
+            continue
+        if inline.get("code"):
+            fence = "``" if "`" in text else "`"
+            out.append(f"{fence}{text}{fence}")
+            continue
+        core = text.strip()
+        if not core:
+            out.append(text)
+            continue
+        lead = text[:len(text) - len(text.lstrip())]
+        trail = text[len(text.rstrip()):]
+        core = _escape_markdown(core)
+        marker = ("**" if inline.get("bold") else "") + ("*" if inline.get("italic") else "")
+        core = f"{marker}{core}{marker}"
+        if inline.get("link"):
+            core = f"[{core}]({inline['link']})"
+        out.append(f"{lead}{core}{trail}")
+    return "".join(out)
+
+
+def blocks_to_markdown(parts):
+    """Render the `comment` segments of a ClickUp comment back to markdown.
+
+    This is the inverse of `markdown_to_blocks`: inline attributes (bold,
+    italic, code, link) become their markers, block attributes (header,
+    blockquote, list, code-block) become the line prefix or the fence.
+    ClickUp echoes a line's block attributes on every text segment of the
+    line and on its terminating newline — confirmed on a real read-back on
+    2026-09-25 — so the newline is what decides the line's block format, and
+    the text segments are the fallback for a last line with no newline.
+
+    Bookmark segments carry no text, only a url, so the url is printed.
+    Anything else without text is skipped rather than printed as JSON.
+    """
+    lines = []           # (block_attrs, rendered_or_raw_text)
+    runs = []            # inline runs of the line being assembled
+    line_attrs = {}      # block attributes seen on the line's text segments
+
+    def block_of(attrs):
+        return {k: v for k, v in (attrs or {}).items() if k in ("header", "blockquote", "list", "code-block")}
+
+    def flush(newline_attrs):
+        attrs = block_of(newline_attrs) or dict(line_attrs)
+        if "code-block" in attrs:
+            lines.append((attrs, "".join(t for t, _ in runs)))
+        else:
+            lines.append((attrs, _render_inline(runs)))
+        runs.clear()
+        line_attrs.clear()
+
+    for part in parts:
+        text = part.get("text")
+        if text is None:
+            url = (part.get("bookmark") or {}).get("url") if part.get("type") == "bookmark" else None
+            if url:
+                runs.append((url, {}))
+            continue
+        attrs = part.get("attributes") or {}
+        pieces = text.split("\n")
+        for i, piece in enumerate(pieces):
+            if piece:
+                runs.append((piece, attrs))
+                line_attrs.update(block_of(attrs))
+            if i < len(pieces) - 1:
+                flush(attrs)
+    if runs:
+        flush(None)
+
+    out = []
+    in_code = False
+    ordered_counters = {}
+    for attrs, text in lines:
+        code = attrs.get("code-block")
+        if code:
+            if not in_code:
+                language = code.get("code-block") if isinstance(code, dict) else code
+                out.append("```" + ("" if language in (None, "", "plain") else str(language)))
+                in_code = True
+            out.append(text)
+            continue
+        if in_code:
+            out.append("```")
+            in_code = False
+
+        if "header" in attrs:
+            ordered_counters.clear()
+            out.append("#" * int(attrs["header"]) + " " + text)
+        elif attrs.get("blockquote"):
+            ordered_counters.clear()
+            out.append("> " + text)
+        elif "list" in attrs:
+            spec = attrs["list"] if isinstance(attrs["list"], dict) else {"list": attrs["list"]}
+            indent = int(spec.get("indent") or 0)
+            for deeper in [d for d in ordered_counters if d > indent]:
+                del ordered_counters[deeper]
+            kind = spec.get("list")
+            if kind == "ordered":
+                ordered_counters[indent] = ordered_counters.get(indent, 0) + 1
+                marker = f"{ordered_counters[indent]}."
+            else:
+                # The reference also documents checklists and toggle lists;
+                # a checkbox keeps its state, every other kind is a bullet.
+                ordered_counters.pop(indent, None)
+                marker = {"checked": "- [x]", "unchecked": "- [ ]"}.get(kind, "-")
+            out.append("  " * indent + f"{marker} {text}")
+        else:
+            ordered_counters.clear()
+            out.append(text)
+    if in_code:
+        out.append("```")
+
+    return "\n".join(out).strip()
+
+
 def get_token():
     """Read API token from config file."""
     if not TOKEN_FILE.exists():
@@ -655,7 +808,16 @@ def cmd_create(args):
 
 
 def cmd_comments(args):
-    """Show comments on a task."""
+    """Show comments on a task, each rendered back to markdown.
+
+    The API answers with `comment_text`, which is the text with every
+    attribute stripped, and `comment`, the segments with their attributes.
+    Printing the stripped text made a rendered bold and a plain word look the
+    same, so nothing about the formatting of a posted comment could be checked
+    from this output. The segments are rendered instead, and a literal `*` or
+    backtick in plain text is escaped, so that `**x**` in the output always
+    means ClickUp holds it as bold.
+    """
     result = api_request(f"task/{args.task_id}/comment")
     comments = result.get("comments", [])
 
@@ -666,17 +828,8 @@ def cmd_comments(args):
     for c in comments:
         user = c.get("user", {}).get("username", "?")
         date = format_date(c.get("date"))
-        text_parts = []
-        for part in c.get("comment", []):
-            if part.get("text"):
-                text_parts.append(part["text"])
-            elif part.get("type") == "bookmark":
-                url = part.get("bookmark", {}).get("url", "")
-                if url:
-                    text_parts.append(url)
-        text = "".join(text_parts).strip()
         print(f"--- {user} ({date}) ---")
-        print(text)
+        print(blocks_to_markdown(c.get("comment", [])))
         print()
 
 

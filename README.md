@@ -88,6 +88,15 @@ looking at your token.
 ClickUp keeps deleted tasks in the workspace Trash for 30 days, so a wrong id is
 recoverable through the web interface.
 
+**`comments` prints markdown, and escapes what only looks like it.** The comment endpoint
+answers with the text stripped of every attribute and, separately, with the segments that
+carry them. The CLI renders the segments back: `**bold**`, `*italic*`, `` `code` ``,
+`[text](url)`, `# heading`, `> quote`, `- ` and `1. ` lists, `- [ ]` checklists, fenced
+code blocks. A literal `*` or backtick in plain text — what `comment --plain` stores —
+comes out escaped as `\*` and `` \` ``, so `**x**` in the output always means ClickUp
+holds it as bold and never that somebody typed asterisks. Underscores are left alone,
+because the renderer never uses them as markup and `snake_case` names are common.
+
 **A subtask names its parent.** The `task` card has a `Parent:` line with the parent's
 id, and `—` when there is none — that is how `create --parent` is checked.
 
@@ -111,8 +120,15 @@ glab ci status                # the pipeline on the current branch
 
 ## Known issues
 
-None recorded. What used to be here — an empty `spaces` listing with no way forward — is
-the paragraph above, and it now has a route that works.
+**A markdown table in a comment stays a row of vertical bars.** `clickup comment`
+translates markdown into the segment format of the comment endpoint, and that format —
+[ClickUp's own reference](https://developer.clickup.com/docs/comment-formatting) lists it
+in full — has bold, italic, code, code block, bullet, numbered, checklist and toggle
+lists, mentions and links, and no table. A table line is therefore posted as the plain
+text it is, pipes included, and that is what the web interface shows. Do not put a table
+in a comment; write the rows as a list. Whether ClickUp's web editor can hold a table drawn
+by hand, how such a comment reads back through the API, and whether a table survives in a
+task description through `markdown_description`, have not been checked.
 
 ## Requirements
 
