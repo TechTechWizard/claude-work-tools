@@ -3,7 +3,7 @@
 The command-line tool a Claude Code session uses to reach ClickUp: tasks, lists,
 comments, attachments, tags, assignees, estimates. It is a plain executable, not a skill:
 a skill cannot carry an executable, so this installs on its own and the `clickup` skill
-from [skills](https://github.com/TechTechWizard/skills) names it as a prerequisite.
+from [dev-skills](https://github.com/TechTechWizard/dev-skills) names it as a prerequisite.
 
 ## What is here
 
