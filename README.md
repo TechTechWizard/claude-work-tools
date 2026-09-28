@@ -82,7 +82,9 @@ together.
 **A bad id looks like an auth error.** `task`, `comments` and `update` on an id that does
 not exist — or that lives in a workspace your token cannot see — both return
 `401 {"err":"Team not authorized","ECODE":"OAUTH_027"}`. Check the id before you go
-looking at your token.
+looking at your token. A custom id such as `PRD-2854` gets the same answer unless the
+query carries `custom_task_ids=true&team_id=<workspace>`; the CLI adds both and swaps the
+custom id for the internal one before any command runs, so either form works everywhere.
 
 **Deleting a task.** `clickup delete <task_id>` names what it removed before it goes, and
 ClickUp keeps deleted tasks in the workspace Trash for 30 days, so a wrong id is

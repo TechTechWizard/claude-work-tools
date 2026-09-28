@@ -487,6 +487,19 @@ def get_workspace_id():
     sys.exit(1)
 
 
+def resolve_task_id(task_id):
+    """Turn a custom task id such as PRD-2854 into the internal one every endpoint accepts.
+
+    The API reads a custom id only with custom_task_ids and team_id in the query; without
+    them it answers 401 "Team not authorized", as for an id that does not exist. Internal
+    ids never contain a dash, so anything else is passed through untouched.
+    """
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*-\d+", task_id):
+        return task_id
+    task = api_request(f"task/{task_id}?custom_task_ids=true&team_id={get_workspace_id()}")
+    return task["id"]
+
+
 def api_request(endpoint, method="GET", data=None):
     """Make API request to ClickUp."""
     token = get_token()
@@ -1086,6 +1099,9 @@ def main():
     if not args.command:
         parser.print_help()
         sys.exit(0)
+
+    if getattr(args, "task_id", None):
+        args.task_id = resolve_task_id(args.task_id)
 
     args.func(args)
 
