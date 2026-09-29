@@ -248,7 +248,6 @@ def blocks_to_markdown(parts):
             lines.extend(({}, row) for row in _table_to_markdown(part.get("table-embed") or {}))
             continue
         text = part.get("text")
-
         if text is None:
             url = (part.get("bookmark") or {}).get("url") if part.get("type") == "bookmark" else None
             if url:
@@ -398,20 +397,17 @@ def resolve_task_id(task_id):
     return task["id"]
 
 
-def api_request(endpoint, method="GET", data=None):
-    """Make API request to ClickUp."""
-    token = get_token()
-    url = f"{API_BASE}/{endpoint}"
+def api_request(endpoint, method="GET", data=None, body=None, content_type="application/json"):
+    """Make API request to ClickUp.
 
-    headers = {
-        "Authorization": token,
-        "Content-Type": "application/json"
-    }
-
-    req = Request(url, headers=headers, method=method)
-
+    `data` is sent as JSON; `body` with its own `content_type` is sent as is,
+    which is how `attach` sends a multipart upload.
+    """
     if data:
-        req.data = json.dumps(data).encode("utf-8")
+        body = json.dumps(data).encode("utf-8")
+
+    headers = {"Authorization": get_token(), "Content-Type": content_type}
+    req = Request(f"{API_BASE}/{endpoint}", data=body, headers=headers, method=method)
 
     try:
         with urlopen(req) as response:
@@ -482,6 +478,18 @@ def build_file_multipart_body(boundary, field_name, filename, content, content_t
     ])
 
 
+def print_task_table(title, tasks, column, width, cell):
+    """Print tasks as Status | Task | <column> | ID, the shape `my-tasks` and `tasks` share."""
+    print(f"\n{title} ({len(tasks)}):\n")
+    print(f"{'Status':<15} {'Task':<50} {column:<{width}} {'ID'}")
+    print("-" * 95)
+
+    for task in tasks:
+        status = task.get("status", {}).get("status", "?")[:14]
+        name = task.get("name", "")[:49]
+        print(f"{status:<15} {name:<50} {cell(task):<{width}} {task.get('id', '')}")
+
+
 def cmd_my_tasks(args):
     """Show tasks assigned to me."""
     params = f"assignees[]={get_user_id()}&subtasks=true&include_closed=false"
@@ -495,16 +503,7 @@ def cmd_my_tasks(args):
         print("No tasks found.")
         return
 
-    print(f"\nMy Tasks ({len(tasks)}):\n")
-    print(f"{'Status':<15} {'Task':<50} {'Due':<12} {'ID'}")
-    print("-" * 95)
-
-    for task in tasks:
-        status = task.get("status", {}).get("status", "?")[:14]
-        name = task.get("name", "")[:49]
-        due = format_date(task.get("due_date"))
-        task_id = task.get("id", "")
-        print(f"{status:<15} {name:<50} {due:<12} {task_id}")
+    print_task_table("My Tasks", tasks, "Due", 12, lambda task: format_date(task.get("due_date")))
 
 
 def cmd_shared(args):
@@ -556,17 +555,11 @@ def cmd_tasks(args):
         print("No tasks found.")
         return
 
-    print(f"\nTasks ({len(tasks)}):\n")
-    print(f"{'Status':<15} {'Task':<50} {'Assignee':<15} {'ID'}")
-    print("-" * 95)
-
-    for task in tasks:
-        status = task.get("status", {}).get("status", "?")[:14]
-        name = task.get("name", "")[:49]
+    def first_assignee(task):
         assignees = task.get("assignees", [])
-        assignee = assignees[0].get("username", "—")[:14] if assignees else "—"
-        task_id = task.get("id", "")
-        print(f"{status:<15} {name:<50} {assignee:<15} {task_id}")
+        return assignees[0].get("username", "—")[:14] if assignees else "—"
+
+    print_task_table("Tasks", tasks, "Assignee", 15, first_assignee)
 
 
 def cmd_task_markdown(args):
@@ -727,13 +720,7 @@ def cmd_tag(args):
 
 
 def cmd_attach(args):
-    """Attach a file to a task.
-
-    This one talks to urlopen directly instead of going through api_request:
-    the shared helper always sends `Content-Type: application/json`, and a
-    multipart body under that header is rejected by the API. Sending it here
-    keeps every other command on the shared helper untouched.
-    """
+    """Attach a file to a task."""
     path = Path(args.file_path).expanduser()
 
     if not path.is_file():
@@ -751,23 +738,10 @@ def cmd_attach(args):
         boundary.encode("ascii"), "attachment", path.name, content, content_type
     )
 
-    req = Request(
-        f"{API_BASE}/task/{args.task_id}/attachment",
-        data=body,
-        headers={
-            "Authorization": get_token(),
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
-        },
-        method="POST",
+    result = api_request(
+        f"task/{args.task_id}/attachment", method="POST", body=body,
+        content_type=f"multipart/form-data; boundary={boundary}",
     )
-
-    try:
-        with urlopen(req) as response:
-            result = json.loads(response.read().decode("utf-8"))
-    except HTTPError as e:
-        error_body = e.read().decode("utf-8")
-        print(f"API Error {e.code}: {error_body}", file=sys.stderr)
-        sys.exit(1)
 
     print("Attachment uploaded!")
     print(f"File: {result.get('title') or path.name}")
