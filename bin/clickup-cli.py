@@ -121,145 +121,6 @@ def normalize_markdown(text):
     return "".join(parts)
 
 
-# Inline markdown, longest-first so that ** wins over * and ``code`` over `code`.
-# Order matters: the alternation is tried left to right.
-_INLINE_PATTERN = re.compile(
-    r'(?P<link>\[(?P<link_text>[^\]]+)\]\((?P<link_url>[^)\s]+)\))'
-    r'|(?P<code>`{1,2}(?P<code_text>[^`]+)`{1,2})'
-    r'|(?P<bold>\*\*(?P<bold_text>[^*]+)\*\*|__(?P<bold_text2>[^_]+)__)'
-    r'|(?P<italic>(?<![*\w])\*(?P<italic_text>[^*\n]+)\*(?![*\w])'
-    r'|(?<![_\w])_(?P<italic_text2>[^_\n]+)_(?![_\w]))'
-)
-
-
-def _inline_segments(text, block_attrs):
-    """Split one line into ClickUp text segments, applying inline markup.
-
-    `block_attrs` (heading, list, quote, ...) is merged into every segment of
-    the line, because ClickUp echoes block attributes on both the text and the
-    terminating newline and rejects nothing when they are present on both.
-    """
-    segments = []
-
-    def emit(chunk, extra=None):
-        if not chunk:
-            return
-        attrs = dict(block_attrs)
-        if extra:
-            attrs.update(extra)
-        segment = {"text": chunk}
-        if attrs:
-            segment["attributes"] = attrs
-        segments.append(segment)
-
-    pos = 0
-    for m in _INLINE_PATTERN.finditer(text):
-        emit(text[pos:m.start()])
-        if m.group('link'):
-            emit(m.group('link_text'), {"link": m.group('link_url')})
-        elif m.group('code'):
-            emit(m.group('code_text'), {"code": True})
-        elif m.group('bold'):
-            emit(m.group('bold_text') or m.group('bold_text2'), {"bold": True})
-        else:
-            emit(m.group('italic_text') or m.group('italic_text2'), {"italic": True})
-        pos = m.end()
-    emit(text[pos:])
-
-    return segments
-
-
-def markdown_to_blocks(text):
-    """Convert markdown to ClickUp rich-text blocks for the comment endpoint.
-
-    The comment endpoint has no markdown field: `comment_text` is stored
-    verbatim (asterisks and backticks included) and `markdown_content` is
-    silently dropped. The only field that renders is `comment`, an array of
-    Quill-style segments where inline markup lives in `attributes` on the text
-    and block markup lives on the terminating newline.
-
-    Verified against the live API on 2026-08-07 — every attribute below was
-    posted and read back unchanged: bold, italic, code, link, header 1-6,
-    bullet and ordered lists, blockquote, code-block.
-
-    Anything not recognised degrades to plain text rather than being dropped,
-    so an unsupported construct costs formatting, never content.
-    """
-    blocks = []
-
-    def close_line(block_attrs):
-        newline = {"text": "\n"}
-        if block_attrs:
-            newline["attributes"] = dict(block_attrs)
-        blocks.append(newline)
-
-    in_code_block = False
-    code_language = "plain"
-
-    for raw_line in normalize_markdown(text).split("\n"):
-        line = raw_line.rstrip()
-
-        fence = re.match(r'^\s*(?:```|~~~)\s*(\w+)?\s*$', line)
-        if fence:
-            if in_code_block:
-                in_code_block = False
-            else:
-                in_code_block = True
-                code_language = fence.group(1) or "plain"
-            continue
-
-        if in_code_block:
-            attrs = {"code-block": {"code-block": code_language}}
-            if raw_line:
-                blocks.append({"text": raw_line, "attributes": dict(attrs)})
-            close_line(attrs)
-            continue
-
-        if not line.strip():
-            close_line(None)
-            continue
-
-        heading = re.match(r'^(#{1,6})\s+(.*)$', line)
-        if heading:
-            attrs = {"header": len(heading.group(1))}
-            blocks.extend(_inline_segments(heading.group(2), attrs))
-            close_line(attrs)
-            continue
-
-        quote = re.match(r'^\s*>\s?(.*)$', line)
-        if quote:
-            attrs = {"blockquote": True}
-            blocks.extend(_inline_segments(quote.group(1), attrs))
-            close_line(attrs)
-            continue
-
-        bullet = re.match(r'^(\s*)[-*+]\s+(.*)$', line)
-        ordered = re.match(r'^(\s*)\d+[.)]\s+(.*)$', line)
-        if bullet or ordered:
-            m = bullet or ordered
-            kind = "bullet" if bullet else "ordered"
-            attrs = {"list": {"list": kind}}
-            indent = len(m.group(1)) // 2
-            if indent:
-                attrs["list"]["indent"] = indent
-            blocks.extend(_inline_segments(m.group(2), attrs))
-            close_line(attrs)
-            continue
-
-        # Horizontal rules have no counterpart in ClickUp comments; a stray
-        # "---" would render as a literal line of dashes, so drop it.
-        if re.match(r'^\s*([-*_])\s*(\1\s*){2,}$', line):
-            continue
-
-        blocks.extend(_inline_segments(line, {}))
-        close_line(None)
-
-    while blocks and blocks[-1].get("text") == "\n" and "attributes" not in blocks[-1]:
-        blocks.pop()
-
-    return blocks or [{"text": text}]
-
-
 _MARKDOWN_ESCAPE = re.compile(r'([*`])')
 _LINE_START_MARKER = re.compile(r'^(\s*)(#{1,6} |> |[-+] |\d+[.)] |```|~~~)')
 
@@ -319,12 +180,39 @@ def _render_inline(runs):
     return "".join(out)
 
 
+def _table_to_markdown(table):
+    """Render a `table-embed` segment as markdown table rows.
+
+    `comment_markdown` turns a markdown table into this segment: cells keyed
+    "row:column" from 1, each holding its own inserts. Seen on 2026-09-29.
+    """
+    cells = table.get("cells") or {}
+    width = len(table.get("columns") or [])
+
+    def cell(row, column):
+        # Inserts carry the same inline attributes as comment segments; a
+        # table row has to stay on one line, so a break inside a cell is a space.
+        content = (cells.get(f"{row}:{column}") or {}).get("content") or []
+        runs = [(i["insert"].replace("\n", " "), i.get("attributes"))
+                for i in content if isinstance(i.get("insert"), str)]
+        return _render_inline(runs).strip().replace("|", "\\|")
+
+    rows = [
+        "| " + " | ".join(cell(row, column) for column in range(1, width + 1)) + " |"
+        for row in range(1, len(table.get("rows") or []) + 1)
+    ]
+    if rows:
+        rows.insert(1, "|" + "---|" * width)
+    return rows
+
+
 def blocks_to_markdown(parts):
     """Render the `comment` segments of a ClickUp comment back to markdown.
 
-    This is the inverse of `markdown_to_blocks`: inline attributes (bold,
-    italic, code, link) become their markers, block attributes (header,
-    blockquote, list, code-block) become the line prefix or the fence.
+    The API takes markdown in (`comment_markdown`) but gives only segments
+    back, so this side stays ours: inline attributes (bold, italic, code,
+    link) become their markers, block attributes (header, blockquote, list,
+    code-block) become the line prefix or the fence.
     ClickUp echoes a line's block attributes on every text segment of the
     line and on its terminating newline — confirmed on a real read-back on
     2026-09-25 — so the newline is what decides the line's block format, and
@@ -354,7 +242,13 @@ def blocks_to_markdown(parts):
         line_attrs.clear()
 
     for part in parts:
+        if part.get("type") == "table-embed":
+            if runs:
+                flush(None)
+            lines.extend(({}, row) for row in _table_to_markdown(part.get("table-embed") or {}))
+            continue
         text = part.get("text")
+
         if text is None:
             url = (part.get("bookmark") or {}).get("url") if part.get("type") == "bookmark" else None
             if url:
@@ -784,18 +678,19 @@ def cmd_comments(args):
 def cmd_comment(args):
     """Add comment to a task.
 
-    Markdown in the text is converted to ClickUp rich-text blocks. Sending it
-    as `comment_text` stores the asterisks and backticks literally, and
-    `markdown_content` — which the task description endpoint accepts — is
-    silently ignored by the comment endpoint. Verified against the live API on
-    2026-08-07: a POST carrying both fields stored only `comment_text`.
+    Markdown goes into `comment_markdown`, and ClickUp turns it into rich text
+    itself. The field is not in the API reference: it surfaced on 2026-09-28
+    in the 400 answer "Provide either comment_text or comment_markdown", and a
+    read-back confirmed headings, bold, italic, code, links, all three list
+    kinds including checklists, quotes and fenced code. `comment_text` stores
+    the markup literally and `markdown_content` is ignored.
 
-    `--plain` skips the conversion when the text must land verbatim.
+    `--plain` posts through `comment_text` when the text must land verbatim.
     """
     if getattr(args, "plain", False):
         data = {"comment_text": args.text, "notify_all": False}
     else:
-        data = {"comment": markdown_to_blocks(args.text), "notify_all": False}
+        data = {"comment_markdown": normalize_markdown(args.text), "notify_all": False}
 
     result = api_request(f"task/{args.task_id}/comment", method="POST", data=data)
 

@@ -90,14 +90,24 @@ custom id for the internal one before any command runs, so either form works eve
 ClickUp keeps deleted tasks in the workspace Trash for 30 days, so a wrong id is
 recoverable through the web interface.
 
+**`comment` relies on a field the API reference does not list.** Markdown goes into
+`comment_markdown`, and ClickUp turns it into rich text itself — headings, bold, italic,
+code, links, all three kinds of list including checklists, quotes, fenced code and tables.
+The reference documents only `comment_text`, which stores the markup literally; the field
+surfaced on 2026-09-28 in the 400 answer `Provide either comment_text or comment_markdown`.
+If ClickUp ever drops it, `comment` starts failing with a 400, and `comment --plain`, which
+posts through `comment_text`, still works.
+
 **`comments` prints markdown, and escapes what only looks like it.** The comment endpoint
 answers with the text stripped of every attribute and, separately, with the segments that
 carry them. The CLI renders the segments back: `**bold**`, `*italic*`, `` `code` ``,
 `[text](url)`, `# heading`, `> quote`, `- ` and `1. ` lists, `- [ ]` checklists, fenced
-code blocks. A literal `*` or backtick in plain text — what `comment --plain` stores —
-comes out escaped as `\*` and `` \` ``, so `**x**` in the output always means ClickUp
-holds it as bold and never that somebody typed asterisks. Underscores are left alone,
-because the renderer never uses them as markup and `snake_case` names are common.
+code blocks, tables. There is no way to ask the API for markdown back, which is why this
+half of the conversion stays in the CLI. A literal `*` or backtick in plain text — what
+`comment --plain` stores — comes out escaped as `\*` and `` \` ``, so `**x**` in the output
+always means ClickUp holds it as bold and never that somebody typed asterisks. Underscores
+are left alone, because the renderer never uses them as markup and `snake_case` names are
+common.
 
 **A subtask names its parent.** The `task` card has a `Parent:` line with the parent's
 id, and `—` when there is none — that is how `create --parent` is checked.
@@ -119,18 +129,6 @@ instead of being given a tool or a skill of their own:
 glab mr list --reviewer=@me   # what is waiting on me for review
 glab ci status                # the pipeline on the current branch
 ```
-
-## Known issues
-
-**A markdown table in a comment stays a row of vertical bars.** `clickup comment`
-translates markdown into the segment format of the comment endpoint, and that format —
-[ClickUp's own reference](https://developer.clickup.com/docs/comment-formatting) lists it
-in full — has bold, italic, code, code block, bullet, numbered, checklist and toggle
-lists, mentions and links, and no table. A table line is therefore posted as the plain
-text it is, pipes included, and that is what the web interface shows. Do not put a table
-in a comment; write the rows as a list. Whether ClickUp's web editor can hold a table drawn
-by hand, how such a comment reads back through the API, and whether a table survives in a
-task description through `markdown_description`, have not been checked.
 
 ## Requirements
 
