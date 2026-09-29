@@ -330,6 +330,10 @@ def blocks_to_markdown(parts):
     2026-09-25 — so the newline is what decides the line's block format, and
     the text segments are the fallback for a last line with no newline.
 
+    A comment written from markdown by the API itself carries a list's depth
+    as `indent` next to `list`, not inside it, and a quote as an empty
+    `blockquote: {}` — both seen on a read-back on 2026-09-28.
+
     Bookmark segments carry no text, only a url, so the url is printed.
     Anything else without text is skipped rather than printed as JSON.
     """
@@ -338,7 +342,7 @@ def blocks_to_markdown(parts):
     line_attrs = {}      # block attributes seen on the line's text segments
 
     def block_of(attrs):
-        return {k: v for k, v in (attrs or {}).items() if k in ("header", "blockquote", "list", "code-block")}
+        return {k: v for k, v in (attrs or {}).items() if k in ("header", "blockquote", "list", "indent", "code-block")}
 
     def flush(newline_attrs):
         attrs = block_of(newline_attrs) or dict(line_attrs)
@@ -386,12 +390,12 @@ def blocks_to_markdown(parts):
         if "header" in attrs:
             ordered_counters.clear()
             out.append("#" * int(attrs["header"]) + " " + text)
-        elif attrs.get("blockquote"):
+        elif "blockquote" in attrs:
             ordered_counters.clear()
             out.append("> " + text)
         elif "list" in attrs:
             spec = attrs["list"] if isinstance(attrs["list"], dict) else {"list": attrs["list"]}
-            indent = int(spec.get("indent") or 0)
+            indent = int(spec.get("indent") or attrs.get("indent") or 0)
             for deeper in [d for d in ordered_counters if d > indent]:
                 del ordered_counters[deeper]
             kind = spec.get("list")
