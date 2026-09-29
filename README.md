@@ -105,10 +105,10 @@ id, and `—` when there is none — that is how `create --parent` is checked.
 **Finding a list id.** `clickup shared` prints every folder shared with you and the lists
 inside it, with task counts — that id is what `tasks`, `create` and the rest take.
 
-Start there rather than with `spaces`: `GET /team/{id}/space` answers `{"spaces":[]}` for
-anyone who reaches projects through shared folders rather than by owning the space, which
-is most people, and both `folders` and `lists` need a space id that such a token can never
-obtain. `clickup spaces` says so plainly instead of printing an empty table.
+There is no `spaces` command: `GET /team/{id}/space` answers `{"spaces":[]}` for anyone who
+reaches projects through shared folders rather than by owning the space, which is most
+people, and the folder and list endpoints under a space need a space id such a token can
+never obtain.
 
 ## Two GitLab queries the tools do not wrap
 

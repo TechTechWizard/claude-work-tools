@@ -609,41 +609,12 @@ def cmd_my_tasks(args):
         print(f"{status:<15} {name:<50} {due:<12} {task_id}")
 
 
-def cmd_spaces(args):
-    """List the spaces this token can see."""
-    workspace = get_workspace_id()
-    spaces = api_request(f"team/{workspace}/space").get("spaces", [])
-
-    # A token whose access comes from folders shared with it gets an empty list here —
-    # the spaces exist, they are simply not the route by which this user reaches them.
-    # The shared hierarchy is that route, so fall back to it rather than report nothing.
-    shared = False
-    if not spaces:
-        spaces = api_request(f"team/{workspace}/shared").get("shared", {}).get("spaces") or []
-        shared = bool(spaces)
-
-    if not spaces:
-        print("\nNo spaces are visible to this token.")
-        print("Spaces reached through shared folders do not appear here — run `clickup shared`,")
-        print("which lists those folders with their lists.")
-        return
-
-    print(f"\nSpaces ({len(spaces)}{', shared with you' if shared else ''}):\n")
-    print(f"{'Name':<40} {'ID'}")
-    print("-" * 55)
-
-    for space in spaces:
-        name = space.get("name", "")[:39]
-        space_id = space.get("id", "")
-        print(f"{name:<40} {space_id}")
-
-
 def cmd_shared(args):
     """List the folders and lists shared with this token.
 
     This is the entry point to the hierarchy for anyone who is not an admin of the
-    workspace: `folders` and `lists` both need a space id, and a member who reaches
-    projects through shared folders can never obtain one. The shared payload carries
+    workspace: the space endpoints answer an empty list to a member who reaches
+    projects through shared folders. The shared payload carries
     each folder's lists inline, so one request is the whole map.
     """
     shared = api_request(f"team/{get_workspace_id()}/shared").get("shared", {})
@@ -672,46 +643,6 @@ def cmd_shared(args):
         for lst in lists:
             name = lst.get("name", "")[:39]
             print(f"{name:<40} {lst.get('id', ''):<16} {lst.get('task_count', '')}")
-
-
-def cmd_folders(args):
-    """List folders in a space."""
-    result = api_request(f"space/{args.space_id}/folder")
-    folders = result.get("folders", [])
-
-    print(f"\nFolders ({len(folders)}):\n")
-    print(f"{'Name':<40} {'ID'}")
-    print("-" * 55)
-
-    for folder in folders:
-        name = folder.get("name", "")[:39]
-        folder_id = folder.get("id", "")
-        print(f"{name:<40} {folder_id}")
-
-        # Also show lists in folder
-        for lst in folder.get("lists", []):
-            list_name = "  └─ " + lst.get("name", "")[:34]
-            list_id = lst.get("id", "")
-            print(f"{list_name:<40} {list_id}")
-
-
-def cmd_lists(args):
-    """List all lists in a space (folderless)."""
-    result = api_request(f"space/{args.space_id}/list")
-    lists = result.get("lists", [])
-
-    print(f"\nLists ({len(lists)}):\n")
-    print(f"{'Name':<40} {'ID'}")
-    print("-" * 55)
-
-    for lst in lists:
-        name = lst.get("name", "")[:39]
-        list_id = lst.get("id", "")
-        print(f"{name:<40} {list_id}")
-
-    # Also show folders
-    print("\nFolders with lists:")
-    cmd_folders(args)
 
 
 def cmd_tasks(args):
@@ -1005,20 +936,6 @@ def main():
     p_my = subparsers.add_parser("my-tasks", help="Show my tasks")
     p_my.add_argument("--status", help="Filter by status")
     p_my.set_defaults(func=cmd_my_tasks)
-
-    # spaces
-    p_spaces = subparsers.add_parser("spaces", help="List spaces")
-    p_spaces.set_defaults(func=cmd_spaces)
-
-    # folders
-    p_folders = subparsers.add_parser("folders", help="List folders in space")
-    p_folders.add_argument("space_id", help="Space ID")
-    p_folders.set_defaults(func=cmd_folders)
-
-    # lists
-    p_lists = subparsers.add_parser("lists", help="List lists in space")
-    p_lists.add_argument("space_id", help="Space ID")
-    p_lists.set_defaults(func=cmd_lists)
 
     # tasks
     p_tasks = subparsers.add_parser("tasks", help="Show tasks from list")
